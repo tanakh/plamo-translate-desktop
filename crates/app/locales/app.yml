@@ -677,3 +677,263 @@ models.catalog_failed:
 models.catalog_refresh:
   en: Check again
   ja: 再確認
+
+files.text_tab:
+  en: "Text"
+  ja: "テキスト"
+
+files.file_tab:
+  en: "Files"
+  ja: "ファイル"
+
+files.drop_prompt:
+  en: "Drop a file here"
+  ja: "ここにファイルをドロップ"
+
+files.history_title:
+  en: "File translations"
+  ja: "ファイル翻訳一覧"
+
+files.filename:
+  en: "File name"
+  ja: "ファイル名"
+
+files.history_target:
+  en: "Target"
+  ja: "翻訳先"
+
+files.history_exported:
+  en: "Saved to %{path}"
+  ja: "%{path} に保存しました"
+
+files.history_missing:
+  en: "The saved translation could not be found."
+  ja: "保存された訳文が見つかりませんでした。"
+
+files.history_delete_title:
+  en: "Delete saved file translations?"
+  ja: "保存された訳文を履歴から削除しますか？"
+
+files.history_delete_body:
+  en: "Remove %{count} result(s) from local history. Exported copies are kept."
+  ja: "ローカル履歴から %{count} 件の訳文を削除します。書き出したコピーは残ります。"
+
+files.history_delete:
+  en: "Delete"
+  ja: "削除"
+
+files.history_clear:
+  en: "Clear history…"
+  ja: "履歴を消去…"
+
+files.history_failed:
+  en: "Could not keep this result in history. Use Save as… to keep a copy. %{error}"
+  ja: "履歴に保存できませんでした。「名前を付けて保存」で訳文を保存できます。%{error}"
+
+files.choose:
+  en: "Choose a file…"
+  ja: "ファイルを選ぶ…"
+
+files.one_file:
+  en: "Choose one file at a time."
+  ja: "ファイルは1件ずつ選んでください。"
+
+files.empty:
+  en: "No translatable text was found."
+  ja: "翻訳できる本文がありません。"
+
+files.encoding:
+  en: "%{encoding} input · Saves as UTF-8 without BOM"
+  ja: "%{encoding}で読み込み · BOMなしUTF-8で保存"
+
+files.starting:
+  en: "Preparing translation…"
+  ja: "翻訳を準備中…"
+
+files.progress:
+  en: "Translating · %{percent}%"
+  ja: "翻訳中 · %{percent}%"
+
+files.progress_label:
+  en: "Translation progress"
+  ja: "翻訳の進捗"
+
+files.done:
+  en: "Completed"
+  ja: "完了"
+
+files.translate_file:
+  en: "Translate a file…"
+  ja: "ファイルを翻訳…"
+
+files.status:
+  en: "Status"
+  ja: "ステータス"
+
+files.ready:
+  en: "Ready"
+  ja: "準備完了"
+
+files.unchanged:
+  en: "No changes"
+  ja: "変更なし"
+
+files.needs_review:
+  en: "Review needed"
+  ja: "要確認"
+
+files.save:
+  en: "Save as…"
+  ja: "名前を付けて保存…"
+
+files.open_saved:
+  en: "Open translation"
+  ja: "訳文を開く"
+
+files.working:
+  en: "Reading or saving file…"
+  ja: "ファイルを読み込み・保存しています…"
+
+files.cancelled:
+  en: "Cancelled. No output file was saved. You can translate again."
+  ja: "中止しました。出力ファイルは保存していません。再実行できます。"
+
+files.translation_failed:
+  en: "Translation failed. No output was saved. Check the model and retry."
+  ja: "翻訳に失敗しました。モデルを確認して再実行してください。出力は保存していません。"
+
+files.error:
+  en: "File operation failed: %{error}"
+  ja: "ファイル処理に失敗しました：%{error}"
+
+files.picker_failed:
+  en: "Could not open the file picker."
+  ja: "ファイル選択画面を開けませんでした。"
+
+files.close_title:
+  en: "A file operation is running"
+  ja: "ファイルを処理しています"
+
+files.close_body:
+  en: "Keep the window open to continue, or stop and close it. Unsaved translations will be discarded."
+  ja: "続行する場合はウィンドウを開いたままにします。中止して閉じると、未保存の訳文は破棄されます。"
+
+files.discard_title:
+  en: "The translation has not been saved"
+  ja: "訳文は保存されていません"
+
+files.discard_body:
+  en: "Continuing discards the finished translation. Keep it to save it first."
+  ja: "続けると、完了した訳文は破棄されます。保存する場合は「戻る」を選んでください。"
+
+files.discard_keep:
+  en: "Go back"
+  ja: "戻る"
+
+files.discard_confirm:
+  en: "Discard"
+  ja: "破棄する"
+
+files.continue:
+  en: "Continue"
+  ja: "続行"
+
+files.cancel_close:
+  en: "Stop and close"
+  ja: "中止して閉じる"
+
+files.wait_for_io:
+  en: "Please finish the file dialog or wait for reading/saving to finish before closing."
+  ja: "ファイル選択・保存ダイアログを閉じ、読み込み・保存が完了してから終了してください。"
+
+files.text_deferred:
+  en: "A file is being translated. Text translation will run afterwards using your latest input."
+  ja: "ファイルを翻訳中です。テキスト翻訳は、完了後に最新の入力で実行します。"
+
+files.no_changes:
+  en: "No translation to save. Check the source file and target language."
+  ja: "保存できる訳文がありません。元のファイルと翻訳先の言語を確認してください。"
+
+files.partial_translation:
+  en: "Some content was kept in the original language."
+  ja: "一部は原文のままです。"
+
+files.update_toc:
+  en: "Update the table of contents in Word."
+  ja: "Wordで目次を更新してください。"
+
+files.check_slides:
+  en: "Check for text that runs off the slide or out of its text box in PowerPoint."
+  ja: "PowerPointで文字が枠からはみ出していないか確認してください。"
+
+files.machine_translation:
+  en: "Before sharing, review key details such as numbers and conditions."
+  ja: "共有前に、数値や条件などの重要な箇所をご確認ください。"
+
+files.check_word:
+  en: "Review the layout in Word, including text boxes, tables, and page breaks."
+  ja: "Wordでテキストボックス、表、改ページなどのレイアウトをご確認ください。"
+
+files.show_review:
+  en: "Show review details"
+  ja: "確認の詳細を表示"
+
+files.slide:
+  en: "Slide %{number}"
+  ja: "スライド%{number}"
+
+files.notes:
+  en: "Notes %{number}"
+  ja: "ノート%{number}"
+
+files.header:
+  en: "Header %{number}"
+  ja: "ヘッダー%{number}"
+
+files.footer:
+  en: "Footer %{number}"
+  ja: "フッター%{number}"
+
+files.body:
+  en: "Document body"
+  ja: "本文"
+
+files.footnotes:
+  en: "Footnotes"
+  ja: "脚注"
+
+files.endnotes:
+  en: "Endnotes"
+  ja: "文末脚注"
+
+files.other_part:
+  en: "%{name}"
+  ja: "%{name}"
+
+files.paragraph_location:
+  en: "%{part}, paragraph %{number}"
+  ja: "%{part}・段落%{number}"
+
+files.retained_at:
+  en: "Source retained: %{location}"
+  ja: "原文保持：%{location}"
+
+files.applied_at:
+  en: "Translation applied: %{location}"
+  ja: "訳文適用：%{location}"
+
+files.check_at:
+  en: "Review: %{location}"
+  ja: "要確認：%{location}"
+
+files.frame_review:
+  en: "Review text fit: %{location}, frame %{number}"
+  ja: "文字の収まりを確認：%{location}・枠%{number}"
+
+files.retained_line:
+  en: "Source retained: line %{number}"
+  ja: "原文保持：%{number}行"
+
+files.applied_line:
+  en: "Translation applied: line %{number}"
+  ja: "訳文適用：%{number}行"

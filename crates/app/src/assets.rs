@@ -7,7 +7,10 @@ use std::borrow::Cow;
 
 use gpui_kit::{AssetSource, Result, SharedString};
 
-gpui_kit::assets::icon_assets!(ExtraIcons, [ArrowLeftRight, CircleArrowUp]);
+gpui_kit::assets::icon_assets!(
+    ExtraIcons,
+    [ArrowLeftRight, CircleArrowUp, Download, FileInput]
+);
 
 pub struct AppAssets;
 
@@ -41,6 +44,8 @@ mod tests {
             IconName::WindowClose,
             IconName::Copy,
             IconName::ArrowLeftRight,
+            IconName::Download,
+            IconName::FileInput,
         ] {
             let path = icon.path();
             assert!(

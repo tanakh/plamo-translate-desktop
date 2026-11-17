@@ -108,7 +108,16 @@ pub fn init(
         async {}
     })
     .detach();
-    cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+    cx.on_action(|_: &Quit, cx: &mut App| request_quit(cx));
+    // The file tab has no text input to own focus. Keep Open available even when switching
+    // tabs removes the previously focused textarea from the view tree.
+    cx.on_action(|_: &view::OpenFile, cx: &mut App| {
+        if let Some((handle, view)) = cx.global::<Shell>().main.clone() {
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = view.update(cx, |this, cx| this.open_file(window, cx));
+            });
+        }
+    });
     let quit = if cfg!(target_os = "macos") {
         "cmd-q"
     } else {
@@ -121,10 +130,28 @@ pub fn init(
     }
 }
 
+fn request_quit(cx: &mut App) {
+    let allowed = cx
+        .global::<Shell>()
+        .main
+        .clone()
+        .is_none_or(|(handle, view)| {
+            handle
+                .update(cx, |_, window, cx| {
+                    view.update(cx, |this, cx| this.allow_close(true, window, cx))
+                        .unwrap_or(true)
+                })
+                .unwrap_or(true)
+        });
+    if allowed {
+        cx.quit();
+    }
+}
+
 fn handle(message: Message, cx: &mut App) {
     match message {
         Message::Request(Request::Show) => show(None, cx),
-        Message::Request(Request::Quit) => cx.quit(),
+        Message::Request(Request::Quit) => request_quit(cx),
         Message::DoubleCopy(text) => {
             if text.trim().is_empty() {
                 return;
@@ -206,6 +233,12 @@ pub fn open_window(settings: Settings, text: Option<String>, cx: &mut App) -> Re
         // Opened by an app in the background (a double copy, or the notification-area icon), the
         // window would stay behind the active one on Windows.
         window.activate_window();
+        let closing_view = view.downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            closing_view
+                .update(cx, |this, cx| this.allow_close(false, window, cx))
+                .unwrap_or(true)
+        });
         if let Some(text) = text {
             view.update(cx, |view, cx| view.translate_text(text, window, cx));
         }

@@ -44,6 +44,17 @@ pub fn data_file(name: &str) -> PathBuf {
     data_dir().map_or_else(|| PathBuf::from(name), |dir| dir.join(name))
 }
 
+/// Initial location for exporting a copy from file history.
+pub fn file_export_dir() -> PathBuf {
+    directories::UserDirs::new()
+        .map(|dirs| {
+            dirs.download_dir()
+                .unwrap_or_else(|| dirs.home_dir())
+                .to_path_buf()
+        })
+        .unwrap_or_else(|| data_file(""))
+}
+
 /// Where the settings are saved.
 pub fn settings_path() -> Option<PathBuf> {
     project_dirs().map(|dirs| dirs.config_dir().join("settings.json"))

@@ -22,6 +22,7 @@ use crate::document::{DocumentOptions, Output, Progress, translate_document, tra
 use crate::llama::{
     Device, GpuOffload, Model, ModelOptions, Runtime, RuntimeOptions, SessionOptions,
 };
+use crate::units::{UnitRequest, UnitResult, translate_units};
 use crate::{StopReason, TranslateStats};
 
 /// Identifies a translation job. Ids increase monotonically per worker.
@@ -75,6 +76,12 @@ pub struct ModelInfo {
 
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// A complete, validated file unit or an explicit failure (never partial text).
+    Unit {
+        job: JobId,
+        index: usize,
+        result: UnitResult,
+    },
     /// llama.cpp could not be initialized, or the worker failed unexpectedly. The worker has
     /// exited.
     RuntimeFailed(String),
@@ -147,6 +154,11 @@ pub enum Event {
 }
 
 enum Command {
+    TranslateUnits {
+        job: JobId,
+        options: TranslationOptions,
+        request: UnitRequest,
+    },
     Load(LoadRequest),
     Measure(MeasureRequest),
     Unload,
@@ -298,6 +310,17 @@ impl Worker {
         job
     }
 
+    /// Translates indivisible file units, validating before committing to history.
+    pub fn translate_units(&self, options: TranslationOptions, request: UnitRequest) -> JobId {
+        let job = self.latest.fetch_add(1, Ordering::SeqCst) + 1;
+        self.send(Command::TranslateUnits {
+            job,
+            options,
+            request,
+        });
+        job
+    }
+
     /// Cancels the running job, if any.
     pub fn cancel(&self) {
         self.latest.fetch_add(1, Ordering::SeqCst);
@@ -345,12 +368,12 @@ fn run(
                 &runtime, &request, &events, &closing,
             ))),
             Command::Unload => events(Event::Unloaded),
-            Command::Translate { job, .. } | Command::TranslateSegments { job, .. } => {
-                events(Event::Failed {
-                    job,
-                    error: "no model is loaded".into(),
-                })
-            }
+            Command::Translate { job, .. }
+            | Command::TranslateSegments { job, .. }
+            | Command::TranslateUnits { job, .. } => events(Event::Failed {
+                job,
+                error: "no model is loaded".into(),
+            }),
         }
     }
 }
@@ -406,7 +429,9 @@ fn serve(
         let job = match &command {
             Command::Load(_) | Command::Measure(_) => return Some(command),
             Command::Unload => return None,
-            Command::Translate { job, .. } | Command::TranslateSegments { job, .. } => *job,
+            Command::Translate { job, .. }
+            | Command::TranslateSegments { job, .. }
+            | Command::TranslateUnits { job, .. } => *job,
         };
         if latest.load(Ordering::SeqCst) != job {
             // Cancelled or superseded before it started. Reported all the same, so that a
@@ -421,6 +446,17 @@ fn serve(
         let count_tokens = |s: &str| model.count_tokens(s);
         let is_cancelled = || latest.load(Ordering::Relaxed) != job;
         let result = match command {
+            Command::TranslateUnits {
+                options, request, ..
+            } => translate_units(
+                &mut session,
+                &count_tokens,
+                n_ctx,
+                &options,
+                &request,
+                &mut |index, result| events(Event::Unit { job, index, result }),
+                &is_cancelled,
+            ),
             Command::Translate {
                 options,
                 document,

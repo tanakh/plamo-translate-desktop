@@ -879,3 +879,39 @@ Possible later work:
 | gpui-pre snapshots break the API often | Open: exact versions are pinned and updated deliberately |
 | Long llama.cpp + Vulkan shader builds in CI | Resolved: packages are built only in the Release workflow, with cached target directories |
 | Small models loop or skip text in long outputs | Mitigated: small chunks, loop detection, retries, and cut markers (§6.1) |
+
+## 15. File translation
+
+The Files tab shares the existing model and worker. `app/src/view/files.rs` is a
+normal child module of the view: it keeps file state and the file-specific view
+methods together without exposing the view's fields. `jobs.rs` owns the active
+file job and defers the latest text request. Cancellation discards incomplete
+results; a stale completion cannot release a newer job.
+
+The `files` crate has no runtime dependency on the model or GUI. TXT uses the
+existing document translator and restores cut passages from source. Markdown
+uses parser offsets and anchor validation, then checks structural events and
+reference definitions after splicing accepted changes. Raw HTML is retained and
+reported by line. Failed segments do not discard other accepted translations.
+
+Office packages are bounded before decompression. Internal relationships identify
+the main and editable parts. XML scanning, paragraph reconstruction, inherited
+font defaults and approximate layout fitting are separate modules. Paragraphs
+remain distinct even when punctuation suggests a wrapped sentence: bullets can
+come from a master. Text-box children are rebuilt before their enclosing drawing
+atoms. Untouched ZIP entries are copied without reserialization.
+
+Structured translation uses the additive `engine::units` path. Tagged units are
+indivisible; incomplete or invalid output cannot enter history. Untagged units use
+the existing chunk/retry rules. The format adapter validates anchors and selected
+Japanese/English yen amounts; this does not establish semantic correctness.
+
+Writing uses a synced temporary file in the destination directory and a
+no-clobber persist. The source path, aliases and existing destinations are rejected.
+The file-format tests run without a model on Linux, macOS and Windows in CI; the
+application integration test also checks TXT chunk recovery. See
+[file translation](file-translation.md) for supported content and limitations.
+
+## File translation history
+
+The Files tab stores the exported result and its metadata under the local application data directory in `file-history/`. Each entry is discoverable after both files are written. Removing a history entry deletes its cached result and metadata. The file picker exports a separate copy.

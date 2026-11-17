@@ -2,6 +2,13 @@
 
 All notable changes to PLaMo Translate Desktop. Each release's section here also becomes its release notes on GitHub.
 
+## Unreleased
+
+### Added
+
+- A desktop Files tab for TXT, Markdown, DOCX and PPTX, using the existing local model.
+  Save translations to new files and review retained text and possible layout problems.
+
 ## [0.6.0] - 2026-11-13
 
 ### Added

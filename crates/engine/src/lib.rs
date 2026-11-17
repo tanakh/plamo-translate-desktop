@@ -9,6 +9,7 @@ pub mod download;
 pub mod llama;
 pub mod models;
 pub mod repetition;
+pub mod units;
 mod utf8;
 pub mod worker;
 

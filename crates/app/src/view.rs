@@ -1,5 +1,7 @@
 //! The main translator window.
 
+mod files;
+
 use std::collections::VecDeque;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -35,7 +37,7 @@ use crate::lang::{self, Choice, SourceChoice, StyleChoice, TargetChoice};
 use crate::models::{ModelsEvent, ModelsPanel};
 use crate::settings::{self, DeviceSetting, DocumentSettings, Settings, ThemeSetting, UiLanguage};
 
-actions!(translator, [CopyTranslation, TranslateNow]);
+actions!(translator, [CopyTranslation, TranslateNow, OpenFile]);
 
 const KEY_CONTEXT: &str = "Translator";
 /// Delay between the last keystroke and an automatic translation.
@@ -318,6 +320,15 @@ const RESIDENT_NOTE: &str = if cfg!(windows) {
 /// Binds the window's shortcuts. Call after `gpui_kit::init`: the later binding of a key wins.
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-o"
+            } else {
+                "ctrl-o"
+            },
+            OpenFile,
+            None,
+        ),
         KeyBinding::new(COPY_TRANSLATION_KEY, CopyTranslation, Some(KEY_CONTEXT)),
         // In the text inputs' own context, over gpui-kit's binding of the same key: its Enter
         // action puts a line break into a multi-line input before it tells of the key, with
@@ -477,6 +488,10 @@ enum InstallState {
 }
 
 pub struct TranslatorView {
+    files: files::FilePanel,
+    file_history: Vec<crate::file_history::Entry>,
+    file_tab: bool,
+    jobs: crate::jobs::Jobs,
     source: Entity<TextareaState>,
     output: Entity<TextareaState>,
     source_select: Entity<SourceSelect>,
@@ -795,6 +810,10 @@ impl TranslatorView {
         };
 
         let mut this = Self {
+            files: files::FilePanel::default(),
+            file_history: Vec::new(),
+            file_tab: false,
+            jobs: crate::jobs::Jobs::default(),
             source,
             output,
             source_select,
@@ -863,6 +882,7 @@ impl TranslatorView {
             _subscriptions: subscriptions,
             _events: events,
         };
+        this.load_file_history(cx);
         this.link_selection_focus(cx);
         this.clean_up_update(cx);
         if this.settings.check_updates {
@@ -970,6 +990,9 @@ impl TranslatorView {
 
     /// Makes `choice` the active model and loads it.
     fn load_model(&mut self, choice: ModelChoice, cx: &mut Context<Self>) {
+        if self.jobs.busy() {
+            return;
+        }
         let entry = match &choice {
             ModelChoice::Catalog(entry) => Some(*entry),
             ModelChoice::Custom(_) => None,
@@ -986,6 +1009,9 @@ impl TranslatorView {
 
     /// Releases the active model. The saved selection stays, so the next start loads it again.
     fn unload_model(&mut self, cx: &mut Context<Self>) {
+        if self.jobs.busy() {
+            return;
+        }
         crate::app_log!("unloading the active model");
         self.worker.unload();
         self.active_model = None;
@@ -1006,6 +1032,9 @@ impl TranslatorView {
     /// (Re)loads the active model with the current backend settings. Before llama.cpp has
     /// reported its devices this only marks the model as loading; the devices event retries.
     fn start_load(&mut self, cx: &mut Context<Self>) {
+        if self.jobs.busy() {
+            return;
+        }
         let Some(choice) = self.active_model.clone() else {
             return;
         };
@@ -1115,6 +1144,9 @@ impl TranslatorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.jobs.busy() {
+            return;
+        }
         match event {
             BackendEvent::Changed(device) => {
                 self.settings.backend.device = device.clone();
@@ -1133,6 +1165,9 @@ impl TranslatorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.jobs.busy() {
+            return;
+        }
         match event {
             ModelsEvent::Use(entry) => {
                 self.load_model(ModelChoice::Catalog(entry), cx);
@@ -1555,6 +1590,10 @@ impl TranslatorView {
     }
 
     fn translate_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.jobs.defer_text() {
+            cx.notify();
+            return;
+        }
         self.debounce = Task::ready(());
         if !self.model_ready {
             self.translate_on_load = self.active_model.is_some();
@@ -1718,6 +1757,8 @@ impl TranslatorView {
                         pending.push_str(&text);
                         self.stream_tokens += 1;
                         self.stream_started.get_or_insert_with(Instant::now);
+                    } else {
+                        self.file_token(job, &text);
                     }
                 }
                 other => {
@@ -1736,6 +1777,9 @@ impl TranslatorView {
     }
 
     fn on_worker_event(&mut self, event: Event, window: &mut Window, cx: &mut Context<Self>) {
+        if self.file_event(&event, window, cx) {
+            return;
+        }
         let is_current = |job| self.current_job == Some(job);
         match event {
             Event::Devices(devices) => {
@@ -1964,6 +2008,7 @@ impl TranslatorView {
             Event::Chunk { .. }
             | Event::Token { .. }
             | Event::Segment { .. }
+            | Event::Unit { .. }
             | Event::Rewind { .. }
             | Event::Retry { .. }
             | Event::Cut { .. }
@@ -2309,6 +2354,9 @@ impl TranslatorView {
 
     /// Quits, and has the prepared version swap itself in and start.
     fn restart_to_update(&mut self, cx: &mut Context<Self>) {
+        if self.file_operation_busy() {
+            return;
+        }
         let InstallState::Ready(version) = self.install else {
             return;
         };
@@ -2537,7 +2585,11 @@ impl TranslatorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.translate_now(window, cx);
+        if self.file_tab {
+            self.start_file(window, cx);
+        } else {
+            self.translate_now(window, cx);
+        }
     }
 
     fn copy_translation(
@@ -2671,7 +2723,13 @@ impl Render for TranslatorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let source = self.source_info(cx);
         let char_count = source.chars;
-        let shows_style = self.target_choice.resolve_for(source.looks_japanese) == "ja";
+        let source_is_japanese = if self.file_tab {
+            self.file_source_is_japanese()
+                .unwrap_or(source.looks_japanese)
+        } else {
+            source.looks_japanese
+        };
+        let shows_style = self.target_choice.resolve_for(source_is_japanese) == "ja";
         let view = cx.entity().downgrade();
         let theme = cx.theme();
         let muted = theme.muted_foreground;
@@ -2692,6 +2750,7 @@ impl Render for TranslatorView {
                 .child(t!("app.title").into_owned()),
         );
         let model_button = Button::new("models")
+            .disabled(self.jobs.busy())
             .xsmall()
             .icon(IconName::HardDrive)
             .label(model_button_label)
@@ -2706,6 +2765,7 @@ impl Render for TranslatorView {
             })
             .on_click(cx.listener(|this, _, window, cx| this.open_models(window, cx)));
         let settings_button = Button::new("settings")
+            .disabled(self.jobs.busy())
             .ghost()
             .xsmall()
             .icon(IconName::Settings)
@@ -2763,28 +2823,47 @@ impl Render for TranslatorView {
             .px_3()
             .py_2()
             .gap_2()
+            .when(self.file_tab, |toolbar| {
+                toolbar
+                    .w_full()
+                    .max_w(px(files::FILE_PANEL_WIDTH + 40.))
+                    .mx_auto()
+                    .px_5()
+                    .flex_none()
+            })
             .child(
                 Select::new(&self.source_select)
-                    .w(scaled(210.))
+                    .w(scaled(if self.file_tab { 190. } else { 210. }))
                     .menu_width(scaled(260.))
                     .search_placeholder(t!("search.language").into_owned()),
             )
-            .child(
-                Button::new("swap")
-                    .ghost()
-                    .icon(Lucide::ArrowLeftRight)
-                    .tooltip(t!("action.swap").into_owned())
-                    .disabled(!self.can_swap())
-                    .on_click(cx.listener(|this, _, window, cx| this.swap(window, cx))),
-            )
+            .map(|toolbar| {
+                if self.file_tab {
+                    toolbar
+                        .child(gpui_kit::component::Icon::new(Lucide::ArrowRight).text_color(muted))
+                } else {
+                    toolbar.child(
+                        Button::new("swap")
+                            .ghost()
+                            .icon(Lucide::ArrowLeftRight)
+                            .tooltip(t!("action.swap").into_owned())
+                            .disabled(!self.can_swap())
+                            .on_click(cx.listener(|this, _, window, cx| this.swap(window, cx))),
+                    )
+                }
+            })
             .child(
                 Select::new(&self.target_select)
-                    .w(scaled(230.))
+                    .w(scaled(if self.file_tab { 215. } else { 230. }))
                     .menu_width(scaled(260.))
                     .search_placeholder(t!("search.language").into_owned()),
             )
             .when(shows_style, |this| {
-                this.child(Select::new(&self.style_select).w(scaled(190.)))
+                this.child(Select::new(&self.style_select).w(scaled(if self.file_tab {
+                    155.
+                } else {
+                    190.
+                })))
             })
             .child(div().flex_1())
             .child(
@@ -2802,31 +2881,37 @@ impl Render for TranslatorView {
                         cx.notify();
                     })),
             )
-            .child(
-                Switch::new("auto-translate")
-                    .checked(self.auto_translate)
-                    .label(t!("action.auto_translate").into_owned())
-                    .on_click(cx.listener(|this, checked: &bool, window, cx| {
-                        this.auto_translate = *checked;
-                        if this.auto_translate {
+            .when(!self.file_tab, |toolbar| {
+                toolbar.child(
+                    Switch::new("auto-translate")
+                        .checked(self.auto_translate)
+                        .label(t!("action.auto_translate").into_owned())
+                        .on_click(cx.listener(|this, checked: &bool, window, cx| {
+                            this.auto_translate = *checked;
+                            if this.auto_translate {
+                                this.translate_now(window, cx);
+                            } else {
+                                this.debounce = Task::ready(());
+                            }
+                            cx.notify();
+                        })),
+                )
+            })
+            .when(!self.file_tab, |toolbar| {
+                toolbar.child(if self.current_job.is_some() {
+                    Button::new("stop")
+                        .danger()
+                        .label(t!("action.stop").into_owned())
+                        .on_click(cx.listener(|this, _, _, cx| this.stop_translation(cx)))
+                } else {
+                    Button::new("translate")
+                        .primary()
+                        .label(t!("action.translate").into_owned())
+                        .disabled(!self.model_ready)
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.translate_now(window, cx);
-                        } else {
-                            this.debounce = Task::ready(());
-                        }
-                        cx.notify();
-                    })),
-            )
-            .child(if self.current_job.is_some() {
-                Button::new("stop")
-                    .danger()
-                    .label(t!("action.stop").into_owned())
-                    .on_click(cx.listener(|this, _, _, cx| this.stop_translation(cx)))
-            } else {
-                Button::new("translate")
-                    .primary()
-                    .label(t!("action.translate").into_owned())
-                    .disabled(!self.model_ready)
-                    .on_click(cx.listener(|this, _, window, cx| this.translate_now(window, cx)))
+                        }))
+                })
             });
 
         let source_pane = v_flex()
@@ -2920,14 +3005,62 @@ impl Render for TranslatorView {
 
         v_flex()
             .key_context(KEY_CONTEXT)
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                if this.current_job.is_some() || this.file_operation_busy() {
+                    return;
+                }
+                if paths.paths().len() == 1 {
+                    this.drop_file(paths.paths()[0].clone(), window, cx);
+                } else {
+                    this.file_tab = true;
+                    this.files.message = Some(t!("files.one_file").into_owned());
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(Self::copy_translation))
             .on_action(cx.listener(Self::translate_now_action))
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
             .child(title_bar)
-            .child(toolbar)
             .child(
+                h_flex()
+                    .px_3()
+                    .py_1()
+                    .gap_2()
+                    .child(
+                        Button::new("text-tab")
+                            .ghost()
+                            .selected(!self.file_tab)
+                            .label(t!("files.text_tab").into_owned())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.file_tab = false;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("file-tab")
+                            .ghost()
+                            .selected(self.file_tab)
+                            .label(t!("files.file_tab").into_owned())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.file_tab = true;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(toolbar)
+            .when(self.jobs.busy() && !self.file_tab, |this| {
+                this.child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .child(t!("files.text_deferred").into_owned()),
+                )
+            })
+            .child(if self.file_tab {
+                self.render_files(cx)
+            } else {
                 h_flex()
                     .flex_1()
                     .min_h_0()
@@ -2935,8 +3068,9 @@ impl Render for TranslatorView {
                     .pb_2()
                     .gap_3()
                     .child(source_pane)
-                    .child(output_pane),
-            )
+                    .child(output_pane)
+                    .into_any_element()
+            })
             .when(self.show_options, |this| {
                 this.child(
                     h_flex()

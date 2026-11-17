@@ -41,6 +41,20 @@
 
 ショートカット: `Ctrl+Enter` ですぐに翻訳、`Ctrl+Shift+C` で訳文をコピー、`Ctrl+Q` で終了。macOS では `Cmd+Enter`、`Cmd+Shift+C`、`Cmd+Q` です。
 
+## ファイル翻訳
+
+**ファイル**タブでTXT・Markdown・Word（`.docx`）・PowerPoint（`.pptx`）を、
+同じローカルモデルで翻訳できます。ファイルを1件ドロップするか `Ctrl+O`
+（macOSは `Cmd+O`）で選び、言語を指定して翻訳し、別名で保存します。
+原本・既存ファイルは上書きせず、中止した結果は保存できません。
+
+確認箇所の表示で原文が残った場所やレイアウトの注意箇所を確認できます。
+PowerPointの文字縮小は元の80％まで、下限8ptです（元から8pt未満の文字は拡大しません）。
+収まらない枠は訳文全文と元の文字サイズを保持し、要確認として表示します。
+訳文の適用は正訳の保証ではありません。数値・条件・Officeのレイアウトを原本と照合してください。
+TXT・MarkdownはUTF-8またはBOM付きUTF-16に対応します。従来の文字コードは先にUTF-8へ変換してください。
+PDFファイル翻訳は含みません。[対応範囲と制限](docs/file-translation.md)も参照してください。
+
 ## モデルとライセンス
 
 アプリにはモデルの重みを同梱していません。アプリでモデルを選ぶと、[Hugging Face の Preferred Networks のページ](https://huggingface.co/pfnet)からダウンロードします。
@@ -270,6 +284,8 @@ NPU 向けにコンパイルしたグラフ（`openvino-cache/`）は次の場�
 - Windows: `%LOCALAPPDATA%\plamo-translate-desktop\data`
 - Linux: `~/.local/share/plamo-translate-desktop`（`$XDG_DATA_HOME`）
 - macOS: `~/Library/Application Support/plamo-translate-desktop`
+
+ファイルタブでは、翻訳済みファイルのコピーをアプリデータの `file-history/` に保存します。各行の削除ボタンや **履歴を消去…** から、保存済みのコピーを削除できます。
 
 ログには、起動、検出したデバイス、モデルの読み込み、ダウンロード、削除、設定の変更、長い文章のやり直しや打ち切りの位置を記録します。翻訳した文章は記録しません。
 起動時に 1 MiB を超えていたら `app.log.1` に退避します。

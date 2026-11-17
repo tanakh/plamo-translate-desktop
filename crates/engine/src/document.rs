@@ -21,7 +21,8 @@ use std::time::Duration;
 
 use pfml::{HistoryPair, Prompt, TranslationOptions};
 
-use crate::{Generation, Result, StopReason, TranslateStats, TranslationBackend};
+use crate::units::{UnitRequest, UnitResult};
+use crate::{EngineError, Generation, Result, StopReason, TranslateStats, TranslationBackend};
 
 /// How a long text is split, and how much history accompanies each chunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -578,6 +579,137 @@ pub fn translate_segments(
     Ok(translator.total)
 }
 
+/// Translates each file unit, publishing only a complete result that passes validation.
+#[allow(clippy::too_many_arguments)]
+pub fn translate_units(
+    backend: &mut dyn TranslationBackend,
+    count_tokens: &dyn Fn(&str) -> usize,
+    n_ctx: usize,
+    options: &TranslationOptions,
+    request: &UnitRequest,
+    on_unit: &mut dyn FnMut(usize, UnitResult),
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<TranslateStats> {
+    let document = DocumentOptions {
+        max_chunk_tokens: request.max_unit_tokens.max(1),
+        max_history_tokens: request.max_history_tokens,
+        cut_marker: String::new(),
+    };
+    let (chunk_budget, history_budget) = budgets(count_tokens, n_ctx, &document, options);
+    let tuning = &request.tuning;
+    let contextual_options = tuning
+        .contexts
+        .iter()
+        .map(|context| {
+            let mut options = options.clone();
+            let limit = (n_ctx / 12).min(512);
+            let mut end = 0;
+            for line in context.split_inclusive('\n') {
+                let next = end + line.len();
+                if count_tokens(&context[..next]) > limit {
+                    break;
+                }
+                end = next;
+            }
+            if end > 0 {
+                if !options.context.trim().is_empty() {
+                    options.context.push('\n');
+                }
+                options.context.push_str(context[..end].trim());
+            }
+            let limits = budgets(count_tokens, n_ctx, &document, &options);
+            (options, limits)
+        })
+        .collect::<Vec<_>>();
+    let mut seen = std::collections::HashMap::<&str, String>::new();
+    let mut history_group = None;
+    let buffer = RefCell::new(String::new());
+    let mut sink = |output: Output<'_>| match output {
+        Output::Text(piece) => buffer.borrow_mut().push_str(piece),
+        Output::Truncate(len) => buffer.borrow_mut().truncate(len),
+    };
+    let mut on_progress = |_: Progress| {};
+    let mut translator = Translator::new(
+        "",
+        backend,
+        count_tokens,
+        &document,
+        options,
+        history_budget,
+        &mut sink,
+        &mut on_progress,
+        is_cancelled,
+    );
+    for (index, unit) in request.units.iter().enumerate() {
+        if is_cancelled() {
+            translator.total.stop_reason = StopReason::Cancelled;
+            break;
+        }
+        let (current, (chunk_budget, history_budget)) = tuning
+            .context_by_unit
+            .get(index)
+            .and_then(|&id| contextual_options.get(id))
+            .map_or(
+                (options, (chunk_budget, history_budget)),
+                |(options, limits)| (options, *limits),
+            );
+        translator.options = current;
+        translator.history_budget = history_budget;
+        let group = tuning.history_by_unit.get(index);
+        if group != history_group {
+            translator.history.clear();
+            translator.history_costs.clear();
+            history_group = group;
+        }
+        let validate = |text: &str| !text.trim().is_empty() && (request.validate)(index, text);
+        if tuning.reuse_translations
+            && let Some(text) = seen.get(unit.text.as_str()).filter(|text| validate(text))
+        {
+            on_unit(
+                index,
+                UnitResult::Complete {
+                    text: text.clone(),
+                    retried: false,
+                },
+            );
+            continue;
+        }
+        translator.text = &unit.text;
+        let history_start = translator.history.len();
+        let cut_start = translator.total.cut;
+        let result = if unit.text.trim().is_empty() {
+            Ok(UnitResult::Invalid)
+        } else if unit.indivisible {
+            translator.indivisible_unit(chunk_budget, &validate)
+        } else {
+            translator.plain_unit(index, chunk_budget, &buffer, &validate)
+        };
+        translator.truncate(0);
+        if translator.total.stop_reason == StopReason::Cancelled || is_cancelled() {
+            translator.total.stop_reason = StopReason::Cancelled;
+            break;
+        }
+        let result = match result {
+            Ok(result) => result,
+            Err(EngineError::PromptTooLong { .. }) => UnitResult::TooLong,
+            Err(error) => return Err(error),
+        };
+        translator.total.cut = cut_start + usize::from(result == UnitResult::Cut);
+        if !matches!(result, UnitResult::Complete { .. }) {
+            translator.history.truncate(history_start);
+            translator.history_costs.truncate(history_start);
+        }
+        if tuning.reuse_translations
+            && let UnitResult::Complete { text, .. } = &result
+        {
+            seen.entry(unit.text.as_str())
+                .or_insert_with(|| text.clone());
+        }
+        on_unit(index, result);
+    }
+    Ok(translator.total)
+}
+
 /// Chunk and history budgets: of what remains of `n_ctx` after the fixed parts (context and
 /// glossary, plus a margin), a chunk gets at most a sixth and history a third, and `document`
 /// caps both further.
@@ -712,6 +844,88 @@ impl<'a> Translator<'a> {
                 translation: translation.to_owned(),
             });
             self.history_costs.push(cost);
+        }
+    }
+
+    /// The tagged input is indivisible. Validate before adding it to shared history.
+    fn indivisible_unit(
+        &mut self,
+        budget: usize,
+        validate: &dyn Fn(&str) -> bool,
+    ) -> Result<UnitResult> {
+        let source = self.text;
+        let tokens = (self.count_tokens)(source);
+        if tokens > budget {
+            return Ok(UnitResult::TooLong);
+        }
+        if (self.is_cancelled)() {
+            self.total.stop_reason = StopReason::Cancelled;
+            return Ok(UnitResult::Cut);
+        }
+        let (translation, reason, generated) = self.generate(
+            source,
+            Generation {
+                max_tokens: max_output_tokens(tokens),
+                penalize_repetition: false,
+            },
+        )?;
+        Ok(match reason {
+            StopReason::Cancelled => {
+                self.total.stop_reason = reason;
+                UnitResult::Cut
+            }
+            StopReason::ContextFull => UnitResult::TooLong,
+            StopReason::Finished if !looks_incomplete(tokens, generated) => {
+                if validate(&translation) {
+                    self.remember(source, &translation);
+                    UnitResult::Complete {
+                        text: translation,
+                        retried: false,
+                    }
+                } else {
+                    UnitResult::Invalid
+                }
+            }
+            _ => UnitResult::Cut,
+        })
+    }
+
+    /// Plain units use the original chunk and recovery rules. Their history is committed by
+    /// the caller only if the final unit passes validation.
+    fn plain_unit(
+        &mut self,
+        index: usize,
+        budget: usize,
+        buffer: &RefCell<String>,
+        validate: &dyn Fn(&str) -> bool,
+    ) -> Result<UnitResult> {
+        let cut_start = self.total.cut;
+        let retry_start = self.total.retries;
+        let split = split(self.text, budget, self.count_tokens);
+        self.emit(split.leading);
+        for chunk in &split.chunks {
+            match self.chunk(index, chunk.text)? {
+                StopReason::Finished => self.emit(chunk.separator),
+                StopReason::ContextFull => return Ok(UnitResult::TooLong),
+                reason => {
+                    if reason == StopReason::Cancelled {
+                        self.total.stop_reason = reason;
+                    }
+                    return Ok(UnitResult::Cut);
+                }
+            }
+        }
+        if self.total.cut != cut_start {
+            return Ok(UnitResult::Cut);
+        }
+        let translation = buffer.borrow();
+        if validate(&translation) {
+            Ok(UnitResult::Complete {
+                text: translation.clone(),
+                retried: self.total.retries != retry_start,
+            })
+        } else {
+            Ok(UnitResult::Invalid)
         }
     }
 

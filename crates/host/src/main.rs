@@ -580,6 +580,8 @@ fn on_event(shared: &(Mutex<Shared>, Condvar), out: &Output, event: Event) {
                 send(out, &Response::Progress { id, index, count });
             }
         }
+        // This host never submits file-unit requests.
+        Event::Unit { .. } => {}
         Event::Segment { job, index, text } => {
             if let Some(id) = current(&s, job) {
                 send(out, &Response::Segment { id, index, text });

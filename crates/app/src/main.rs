@@ -9,6 +9,8 @@ mod align;
 mod assets;
 mod backend;
 mod browser;
+mod file_history;
+mod jobs;
 mod lang;
 mod models;
 mod shell;
